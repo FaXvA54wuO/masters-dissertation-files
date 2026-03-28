@@ -1,0 +1,39 @@
+id: ALPINE.NETWORK.IP.LINK.0
+version: 1
+category: network
+action: command
+impact: PASSIVE
+volatility: 20
+priority: 6
+requires_elevation: false
+evidential_source:
+- network interface link state
+commands_used:
+- ip
+output_type: file
+output_path: network/ip_link.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  if command -v ip >/dev/null 2>&1; then
+    ip link show >"${output_file}" 2>>"${LOG}" || printf '%s\n' "command failed" >"${output_file}"
+  else
+    printf '%s\n' "ip not present" >"${output_file}"
+  fi
+description: |
+  Summary:
+    Captures network interface link state using ip link show.
+
+  Dependencies:
+    Requires the ip command to be available on the system. The variables
+    TASK_OUTPUT and LOG must be defined, and a mkparent function must be available
+    to create the output path.
+
+  Output:
+    Writes link-layer interface state to the path defined by output_path.
+
+  Notes:
+    Includes interface status, MAC addresses, and operational flags.
+references:
+  - "Derived from UAC network/ip.yaml"

@@ -1,0 +1,40 @@
+id: ALPINE.NETWORK.IFCONFIG.0
+version: 1
+category: network
+action: command
+impact: PASSIVE
+volatility: 20
+priority: 4
+requires_elevation: false
+evidential_source:
+- network interface configuration state
+commands_used:
+- ifconfig
+output_type: file
+output_path: network/ifconfig_-a.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  ifconfig -a >"${output_file}" 2>>"${LOG}"
+description: |
+  Summary:
+    Captures the configuration of all network interfaces, including those that
+    are not currently active.
+
+  Dependencies:
+    Requires the ifconfig command to be available on the system. The variables
+    TASK_OUTPUT and LOG must be defined, and a mkparent function must be available
+    to create the output path.
+
+  Output:
+    Writes the output of ifconfig -a to the path defined by output_path, provided
+    at runtime via TASK_OUTPUT.
+
+  Notes:
+    The ifconfig -a option includes both active and inactive interfaces, providing
+    a complete view of network interface configuration at the time of collection.
+    This task preserves the original UAC command source for consistency and
+    comparison, although modern systems may prefer ip-based tooling.
+references:
+- Derived from UAC network ifconfig.yaml; retained for compatibility with Alpine environments where ifconfig is available.

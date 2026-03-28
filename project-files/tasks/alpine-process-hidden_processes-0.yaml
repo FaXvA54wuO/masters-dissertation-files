@@ -1,0 +1,61 @@
+id: ALPINE.PROCESS.HIDDEN_PROCESSES.0
+version: 1
+category: process
+action: command
+impact: PASSIVE
+volatility: 10
+priority: 1
+requires_elevation: true
+evidential_source:
+- /proc
+- /proc/[pid]
+commands_used:
+- ps
+- awk
+output_type: file
+output_path: process/hidden_pids_for_ps_command.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  : >"${output_file}"
+
+  visible_pids="$(ps -o pid 2>>"${LOG}" | awk 'BEGIN{s=":"} $1 ~ /^[0-9]+$/ {s=s $1 ":"} END{print s}')"
+
+  if [ "${visible_pids}" != ":" ]; then
+    for d in /proc/[0-9]*; do
+      [ -d "${d}" ] || continue
+
+      pid="${d##*/}"
+
+      case "${visible_pids}" in
+        *":${pid}:"*) : ;;
+        *) printf '%s\n' "${pid}" ;;
+      esac
+    done >>"${output_file}"
+  else
+    printf '%s\n' "Error: could not gather visible PIDs from ps output." >>"${output_file}"
+  fi
+description: |
+  Summary:
+    Identifies process identifiers present in the /proc filesystem that are not
+    reported by the ps command.
+  
+  Dependencies:
+    Requires the ps and awk commands to be available on the system. The 
+    variables TASK_OUTPUT and LOG must be defined, and a mkparent function 
+    must be available to create the output path.
+  
+  Output:
+    Writes a list of PIDs present under /proc but absent from ps output to the path
+    defined by output_path, provided at runtime via TASK_OUTPUT. If the ps command
+    fails to return a valid PID list, an error message is written instead.
+  
+  Notes:
+    The task constructs a delimiter-wrapped list of visible PIDs from ps output and
+    compares it against directory names under /proc. This approach avoids partial
+    matches when evaluating PID membership. Discrepancies may indicate process
+    hiding, /proc filtering, or userland subversion, but can also arise from timing
+    differences between enumeration methods.
+references:
+- Derived from UAC artifacts live_response modifiers revel_hidden_processes.yaml; retained /proc versus ps hidden PID detection and excluded state-changing umount step.

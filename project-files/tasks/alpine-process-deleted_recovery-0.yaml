@@ -1,0 +1,121 @@
+id: ALPINE.PROCESS.DELETED_RECOVERY.0
+version: 1
+category: process
+action: command
+impact: PASSIVE
+volatility: 10
+priority: 8
+requires_elevation: true
+evidential_source:
+- /proc/[pid]/exe
+- /proc/[pid]/fd
+commands_used:
+- readlink
+- dd
+output_type: dir
+output_path: process/proc/
+environment: ash
+script: |
+  output_dir="$(mkdir_out "${TASK_OUTPUT}")"
+  report_file="${output_dir}/_deleted_recovery_report.txt"
+
+  : >"${report_file}"
+
+  for d in /proc/[0-9]*; do
+    [ -d "${d}" ] || continue
+
+    pid="${d##*/}"
+
+    [ -L "${d}/exe" ] || continue
+
+    target="$(readlink "${d}/exe" 2>>"${LOG}" || true)"
+    [ -n "${target}" ] || continue
+
+    case "${target}" in
+      *" (deleted)"*) : ;;
+      *) continue ;;
+    esac
+
+    case "${target}" in
+      /proc/*)
+        printf '%s\n' "SKIP PID=${pid} EXE=${target} (target under /proc)" >>"${report_file}"
+        continue
+        ;;
+    esac
+
+    pid_dir="${output_dir}/${pid}"
+    mkdir -p "${pid_dir}"
+
+    printf '%s\n' "RECOVER_EXE PID=${pid} EXE=${target} -> ${TASK_OUTPUT}/${pid}/recovered_exe.bin (max 20MiB)" >>"${report_file}"
+
+    dd if="/proc/${pid}/exe" of="${pid_dir}/recovered_exe.bin" bs=1024 count=20000 2>>"${LOG}" || true
+
+    if [ -d "${d}/fd" ]; then
+      for fd in "${d}/fd"/*; do
+        [ -e "${fd}" ] || continue
+
+        fd_num="${fd##*/}"
+
+        fd_target="$(readlink "${fd}" 2>>"${LOG}" || true)"
+        [ -n "${fd_target}" ] || continue
+
+        case "${fd_target}" in
+          *" (deleted)"*) : ;;
+          *) continue ;;
+        esac
+
+        case "${fd_target}" in
+          /dev/*|/proc/*)
+            printf '%s\n' "SKIP_FD PID=${pid} FD=${fd_num} TARGET=${fd_target} (under /dev or /proc)" >>"${report_file}"
+            continue
+            ;;
+        esac
+
+        case "${fd_target}" in
+          memfd:*)
+            name="recovered_memfd_${fd_num}.bin"
+            ;;
+          *)
+            name="recovered_fd_${fd_num}.bin"
+            ;;
+        esac
+
+        printf '%s\n' "RECOVER_FD PID=${pid} FD=${fd_num} TARGET=${fd_target} -> ${TASK_OUTPUT}/${pid}/${name} (max 20MiB)" >>"${report_file}"
+
+        dd if="/proc/${pid}/fd/${fd_num}" of="${pid_dir}/${name}" bs=1024 count=20000 2>>"${LOG}" || true
+      done
+    fi
+  done
+description: |
+  Summary:
+    Attempts recovery of executable and file-backed artefacts from processes whose
+    backing files have been deleted, using /proc-based access while the process is
+    still running.
+
+  Dependencies:
+    Requires the readlink and dd commands to be available on the system. The
+    variables TASK_OUTPUT and LOG must be defined, and a mkdir_out function must
+    be available to create the output directory structure.
+
+  Output:
+    Creates per-process directories under the path defined by output_path,
+    provided at runtime via TASK_OUTPUT. Recovered content is written as binary
+    files, and a report file (_deleted_recovery_report.txt) records all recovery
+    actions, skips, and target paths.
+
+  Notes:
+    Recovery is limited to a maximum of 20 MiB per artefact to balance evidential
+    capture with resource usage. Only targets marked "(deleted)" are considered,
+    aligning with common DFIR practice of recovering artefacts no longer present
+    on disk but still accessible via procfs.
+
+    Executables and file descriptors referencing paths under /proc or /dev are
+    skipped to avoid non-file-backed or ephemeral targets. memfd-backed artefacts
+    are handled separately based on naming conventions; however, kernel behaviour
+    regarding "(deleted)" markers for memfd objects may vary, and some artefacts
+    may not be captured under this constraint.
+
+    Transient read errors due to process lifecycle changes are expected and are
+    written to the log without interrupting execution.
+references:
+- Derived from UAC artifacts live_response process deleted recovery logic; consolidated into a single PID traversal and adapted for Alpine procfs-based recovery.

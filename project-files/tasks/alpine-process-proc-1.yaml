@@ -1,0 +1,102 @@
+id: ALPINE.PROCESS.PROC.1
+version: 1
+category: process
+action: command
+impact: PASSIVE
+volatility: 10
+priority: 4
+requires_elevation: true
+evidential_source:
+- /proc/[pid]/exe
+- /proc/[pid]/cwd
+- /proc/[pid]/comm
+- /proc/[pid]/cmdline
+- /proc/[pid]/environ
+- /proc/[pid]/stat
+- /proc/[pid]/status
+- /proc/[pid]/maps
+- /proc/[pid]/mounts
+- /proc/[pid]/stack
+- /proc/[pid]/cgroup
+- /proc/[pid]/fd
+- /proc/[pid]/map_files
+- /proc/[pid]/net/unix
+commands_used:
+- cat
+- ls
+- readlink
+output_type: dir
+output_path: process/proc/
+environment: ash
+script: |
+  output_dir="$(mkdir_out "${TASK_OUTPUT}")"
+
+  for d in /proc/[0-9]*; do
+    [ -d "${d}" ] || continue
+
+    pid="${d##*/}"
+    pid_dir="${output_dir}/${pid}"
+
+    mkdir -p "${pid_dir}"
+
+    for rel in comm stat status maps mounts stack cgroup; do
+      src="${d}/${rel}"
+      [ -e "${src}" ] || continue
+      [ -r "${src}" ] || continue
+
+      cat "${src}" >"${pid_dir}/${rel}.txt" 2>>"${LOG}" || true
+    done
+
+    for rel in cmdline environ; do
+      src="${d}/${rel}"
+      [ -e "${src}" ] || continue
+      [ -r "${src}" ] || continue
+
+      cat "${src}" >"${pid_dir}/${rel}.bin" 2>>"${LOG}" || true
+    done
+
+    for rel in exe cwd; do
+      src="${d}/${rel}"
+      [ -L "${src}" ] || continue
+
+      readlink "${src}" >"${pid_dir}/${rel}.txt" 2>>"${LOG}" || true
+    done
+
+    src="${d}/net/unix"
+    [ -r "${src}" ] && cat "${src}" >"${pid_dir}/net_unix.txt" 2>>"${LOG}" || true
+
+    for rel in fd map_files; do
+      src="${d}/${rel}"
+      [ -d "${src}" ] && ls -la "${src}" >"${pid_dir}/ls_la_${rel}.txt" 2>>"${LOG}" || true
+    done
+  done
+description: |
+  Summary:
+    Collects a structured per-process evidence bundle from the /proc filesystem
+    for all active process identifiers.
+
+  Dependencies:
+    Requires the cat, ls, and readlink commands to be available on the system.
+    The variables TASK_OUTPUT and LOG must be defined, and a mkdir_out function
+    must be available to create the output directory structure.
+
+  Output:
+    Creates a directory structure under the path defined by output_path, provided
+    at runtime via TASK_OUTPUT. Each PID is written to its own subdirectory
+    containing process-specific artefacts.
+
+  Notes:
+    Key process state files (comm, stat, status, maps, mounts, stack, cgroup) are
+    copied verbatim to preserve runtime context including identity, privileges,
+    memory layout, and control group membership. The cmdline and environ files are
+    stored as raw binary to preserve NUL-delimited data. Symbolic links (exe, cwd)
+    are resolved to capture executable provenance and working directory.
+
+    Directory listings of fd and map_files provide insight into open file
+    descriptors and file-backed memory mappings. Per-process UNIX domain socket
+    information is collected from /proc/<pid>/net/unix when accessible.
+
+    Transient read errors are expected due to process lifecycle changes and are
+    recorded in the log without interrupting execution.
+references:
+- Derived from UAC artifacts live_response process proc.yaml (Linux); consolidated per-PID collection into a single loop and excluded non-Linux variants.

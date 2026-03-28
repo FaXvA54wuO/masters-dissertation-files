@@ -1,0 +1,55 @@
+id: ALPINE.NETWORK.PROC_NET.0
+version: 1
+category: network
+action: command
+impact: PASSIVE
+volatility: 20
+priority: 1
+requires_elevation: false
+evidential_source:
+- /proc/net/tcp
+- /proc/net/tcp6
+- /proc/net/udp
+- /proc/net/udp6
+commands_used:
+- cat
+output_type: dir
+output_path: network/net/
+environment: ash
+script: |
+  output_dir="$(mkdir_out "${TASK_OUTPUT}")"
+
+  for protocol in tcp tcp6 udp udp6; do
+    src="/proc/net/${protocol}"
+    dst="${output_dir}/${protocol}.txt"
+
+    if [ -r "${src}" ]; then
+      cat "${src}" >"${dst}" 2>>"${LOG}"
+    else
+      printf '%s\n' "not present" >"${dst}"
+    fi
+  done
+description: |
+  Summary:
+    Captures kernel socket tables for TCP and UDP over both IPv4 and IPv6 from
+    the /proc/net filesystem.
+
+  Dependencies:
+    Requires the cat command to be available on the system. The variables
+    TASK_OUTPUT and LOG must be defined, and a mkdir_out function must be
+    available to create the output directory.
+
+  Output:
+    Creates a directory under the path defined by output_path, provided at runtime
+    via TASK_OUTPUT. Each socket table is written to a separate file named after
+    its source (tcp.txt, tcp6.txt, udp.txt, udp6.txt). Missing files are recorded
+    as "not present" within their respective outputs.
+
+  Notes:
+    These files expose kernel-level socket state, including local and remote
+    addresses, ports, and connection status. The data is presented in a compact,
+    encoded format requiring post-processing for interpretation. Grouping related
+    /proc/net artefacts in a single directory preserves a coherent snapshot of
+    network state while maintaining a one-to-one mapping between source and output.
+references:
+- Derived from UAC network proc_net.yaml; adapted to a directory-based collection model consistent with other /proc artefact grouping.

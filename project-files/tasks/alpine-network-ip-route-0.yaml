@@ -1,0 +1,39 @@
+id: ALPINE.NETWORK.IP.ROUTE.0
+version: 1
+category: network
+action: command
+impact: PASSIVE
+volatility: 20
+priority: 8
+requires_elevation: false
+evidential_source:
+- kernel routing table
+commands_used:
+- ip
+output_type: file
+output_path: network/ip_route.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  if command -v ip >/dev/null 2>&1; then
+    ip route list >"${output_file}" 2>>"${LOG}" || printf '%s\n' "command failed" >"${output_file}"
+  else
+    printf '%s\n' "ip not present" >"${output_file}"
+  fi
+description: |
+  Summary:
+    Captures the system routing table using ip route list.
+
+  Dependencies:
+    Requires the ip command to be available on the system. The variables
+    TASK_OUTPUT and LOG must be defined, and a mkparent function must be available
+    to create the output path.
+
+  Output:
+    Writes routing table entries to the path defined by output_path.
+
+  Notes:
+    Includes default routes, gateways, and interface associations.
+references:
+  - "Derived from UAC network/ip.yaml"

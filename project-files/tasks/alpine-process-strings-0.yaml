@@ -1,0 +1,78 @@
+id: ALPINE.PROCESS.STRINGS.0
+version: 1
+category: process
+action: command
+impact: PASSIVE
+volatility: 10
+priority: 7
+requires_elevation: true
+evidential_source:
+- /proc/[pid]/exe
+commands_used:
+- strings
+- gzip
+output_type: dir
+output_path: process/proc/
+environment: ash
+script: |
+  output_dir="$(mkdir_out "${TASK_OUTPUT}")"
+  status_file="${output_dir}/_strings_status.txt"
+
+  : >"${status_file}"
+
+  HAS_STRINGS=""
+  if command -v strings >/dev/null 2>&1; then
+    HAS_STRINGS=1
+  fi
+
+  if [ -z "${HAS_STRINGS}" ]; then
+    printf '%s\n' "strings not present" >>"${status_file}"
+  else
+    if [ "${GZIP_AVAILABLE}" -eq 1 ]; then
+      printf '%s\n' "gzip present; writing strings.txt.gz per PID" >>"${status_file}"
+    else
+      printf '%s\n' "gzip not present; writing strings.txt per PID" >>"${status_file}"
+    fi
+
+    for d in /proc/[0-9]*; do
+      [ -d "${d}" ] || continue
+      [ -L "${d}/exe" ] || continue
+
+      pid="${d##*/}"
+      pid_dir="${output_dir}/${pid}"
+
+      mkdir -p "${pid_dir}" 2>/dev/null || true
+
+      if [ "${GZIP_AVAILABLE}" -eq 1 ]; then
+        strings -a "${d}/exe" 2>>"${LOG}" | gzip >"${pid_dir}/strings.txt.gz" 2>>"${LOG}" || true
+      else
+        strings -a "${d}/exe" >"${pid_dir}/strings.txt" 2>>"${LOG}" || true
+      fi
+    done
+  fi
+description: |
+  Summary:
+    Extracts printable strings from executables backing running processes by
+    reading /proc/<pid>/exe for each active process.
+
+  Dependencies:
+    Requires the strings command to be available on the system. The gzip command
+    is optional and will be used if present. The variables TASK_OUTPUT and LOG
+    must be defined, and a mkdir_out function must be available to create the
+    output directory structure.
+
+  Output:
+    Creates a per-process directory structure under the path defined by
+    output_path, provided at runtime via TASK_OUTPUT. Each PID directory contains
+    extracted strings written to either strings.txt or strings.txt.gz depending on
+    gzip availability. A status file (_strings_status.txt) is written to record
+    tool availability and output mode.
+
+  Notes:
+    This task supports rapid identification of embedded indicators such as file
+    paths, URLs, domains, error messages, and configuration artefacts within
+    running executables. Output compression is applied when available to reduce
+    storage overhead. Transient errors due to process lifecycle changes are
+    expected and are written to the log without interrupting execution.
+references:
+- Derived from UAC artifacts live_response process strings.yaml; Linux behaviour retained with per-PID output and optional gzip compression.

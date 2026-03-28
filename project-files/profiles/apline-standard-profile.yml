@@ -1,0 +1,262 @@
+profile_id: ALPINE.STANDARD.V1
+platform: alpine
+shell: ash
+version: 1
+
+default_out: /tmp/triage
+default_log: _deploy.log
+
+standard_assumptions: >
+  Each task definition uses a body-only script field which assumes the wrapper provides:
+  OUT (an existing directory used as the evidence root), LOG (a writable log file path),
+  and TASK_OUTPUT (the task's output_path, relative under OUT). Tasks also assume the helper
+  functions mkparent (for file outputs) and mkdir_out (for directory outputs) exist.
+  This profile provides these variables and helpers in the preamble section.
+  Tasks may suppress non-critical errors using '|| true' to ensure continued execution
+  in volatile environments.
+
+script_output_name: alpine-process-network-triage.sh
+
+script_output_template: |
+  {preamble}
+
+  # ---------------------------------------------------------------------
+  # Tasks list defined as functions
+  # ---------------------------------------------------------------------
+
+  {functions}
+
+  # ---------------------------------------------------------------------
+  # Task Function calls
+  # ---------------------------------------------------------------------
+
+  {calls}
+
+  {postamble}
+
+  # SCRIPT GENERATION METADATA
+  {footer}
+
+script_output_metadata: |
+  # Generated acquisition script
+  # Timestamp: {timestamp}
+  # Profile used: {profile_id}
+  # Profile location: {profile_path}
+  # Task List Location: {tasks_dir}
+
+function_name_prefix: task_
+
+function_template: |
+  {function}() {
+    local OUT="$1"
+    local LOG="$2"
+    local TASK_OUTPUT="$3"
+
+  {function_body}
+  }
+
+function_call_template: |
+  run_task "{id}" "{output_path}"
+
+preamble: |
+  #!/bin/ash
+  set -eu
+
+  # ---------------------------------------------------------------------
+  # Core execution context
+  # ---------------------------------------------------------------------
+
+  OUTPUT_ROOT="${1:-/tmp/triage}"
+  mkdir -p "${OUTPUT_ROOT}"
+
+  LOG_FILE="${LOG_FILE:-${OUTPUT_ROOT}/_deploy.log}"
+
+  # ---------------------------------------------------------------------
+  # Utility functions
+  # ---------------------------------------------------------------------
+
+  timestamp_utc() {
+    date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date
+  }
+
+  log_event() {
+    printf '%s %s\n' "$(timestamp_utc)" "$*" >>"${LOG_FILE}"
+  }
+
+  resolve_output_path() {
+    printf '%s/%s' "${OUTPUT_ROOT}" "$1"
+  }
+
+  mkparent() {
+    local full_path="$(resolve_output_path "$1")"
+    local parent_dir="${full_path%/*}"
+
+    [ "${parent_dir}" != "${full_path}" ] && mkdir -p "${parent_dir}"
+
+    printf '%s' "${full_path}"
+  }
+
+  mkdir_out() {
+    local dir_path="$(resolve_output_path "$1")"
+    mkdir -p "${dir_path}"
+    printf '%s' "${dir_path}"
+  }
+
+  task_id_to_function_name() {
+    printf 'task_%s' "$(printf '%s' "$1" | tr '.' '_')"
+  }
+
+  # ---------------------------------------------------------------------
+  # Task execution wrapper
+  # ---------------------------------------------------------------------
+
+  run_task() {
+    local task_id="$1"
+    local task_output_path="${2:-}"
+
+    local function_name
+    function_name="$(task_id_to_function_name "${task_id}")"
+
+    log_event "START ${task_id} ${task_output_path}"
+
+    command -v "${function_name}" >/dev/null 2>&1 || {
+      log_event "FAIL  ${task_id} missing_function=${function_name}"
+      return 0
+    }
+
+    set +e
+
+    (
+      set -x
+      "${function_name}" "${OUTPUT_ROOT}" "${LOG_FILE}" "${task_output_path}"
+    ) >>"${LOG_FILE}" 2>&1
+
+    local exit_code="$?"
+
+    set -e
+
+    if [ "${exit_code}" -ne 0 ]; then
+      log_event "FAIL  ${task_id} exit_code=${exit_code} ${task_output_path}"
+    else
+      log_event "END   ${task_id} ${task_output_path}"
+    fi
+
+    return 0
+  }
+
+  log_event "EVIDENCE_ROOT_INITIALISED path=${OUTPUT_ROOT}"
+
+  # ---------------------------------------------------------------------
+  # Global Capability Detection
+  # ---------------------------------------------------------------------
+
+  TAR_AVAILABLE=0
+  if command -v tar >/dev/null 2>&1; then
+    TAR_AVAILABLE=1
+  fi
+  
+  GZIP_AVAILABLE=0
+  if command -v gzip >/dev/null 2>&1; then
+    GZIP_AVAILABLE=1
+  fi
+
+  HASH_CMD=""
+  for h in sha256sum sha512sum sha3sum sha1sum md5sum; do
+    if command -v "$h" >/dev/null 2>&1; then
+      HASH_CMD="$h"
+      break
+    fi
+  done
+
+  HASH_AVAILABLE=0
+  [ -n "$HASH_CMD" ] && HASH_AVAILABLE=1
+
+  log_event "GLOBAL_CAPABILITY hash=${HASH_AVAILABLE} hash_cmd=${HASH_CMD:-none} tar=${TAR_AVAILABLE} gzip=${GZIP_AVAILABLE}"
+
+postamble: |
+  log_event "RUN_END output_root=${OUTPUT_ROOT}"
+
+  archive_path="${OUTPUT_ROOT%/}.tar.gz"
+
+  # ---------------------------------------------------------------------
+  # Archiving
+  # ---------------------------------------------------------------------
+
+  ARCHIVE_CREATED=0
+
+  if [ "${TAR_AVAILABLE:-0}" -eq 1 ]; then
+    if tar -czf "${archive_path}" -C "${OUTPUT_ROOT}" . >>"${LOG_FILE}" 2>&1; then
+      log_event "ARCHIVE_CREATED path=${archive_path}"
+      ARCHIVE_CREATED=1
+    else
+      log_event "ARCHIVE_FAILED path=${archive_path}"
+    fi
+  else
+    log_event "ARCHIVE_SKIPPED reason=no_tar"
+  fi
+
+  # ---------------------------------------------------------------------
+  # Hashing (archive or directory)
+  # ---------------------------------------------------------------------
+
+  if [ "${HASH_AVAILABLE:-0}" -eq 1 ]; then
+
+    run_hash() {
+      local source_path="$1"
+      local output_path="$2"
+
+      if "${HASH_CMD}" "${source_path}" >"${output_path}" 2>>"${LOG_FILE}"; then
+        log_event "HASH_CREATED file=${output_path}"
+      else
+        log_event "HASH_FAILED file=${source_path}"
+      fi
+    }
+
+    if [ "${ARCHIVE_CREATED}" -eq 1 ]; then
+      run_hash "${archive_path}" "${archive_path}.${HASH_CMD}"
+    else
+      if find "${OUTPUT_ROOT}" -type f -exec "${HASH_CMD}" {} + >"${OUTPUT_ROOT}.hashes.${HASH_CMD}" 2>>"${LOG_FILE}"; then
+        log_event "HASH_CREATED directory=${OUTPUT_ROOT}.hashes.${HASH_CMD}"
+      else
+        log_event "HASH_FAILED directory=${OUTPUT_ROOT}"
+      fi
+    fi
+
+    # -----------------------------------------------------------------
+    # Final log entries BEFORE hashing log
+    # -----------------------------------------------------------------
+
+    log_event "EVIDENCE_LOCATION path=${OUTPUT_ROOT}"
+    log_event "HASHING log_file=${LOG_FILE}"
+
+    # -----------------------------------------------------------------
+    # FINAL STEP: hash log (no writes after this)
+    # -----------------------------------------------------------------
+
+    "${HASH_CMD}" "${LOG_FILE}" >"${LOG_FILE}.${HASH_CMD}" 2>/dev/null || true
+
+  else
+    log_event "HASH_SKIPPED reason=no_hash_tool"
+    log_event "EVIDENCE_LOCATION path=${OUTPUT_ROOT}"
+  fi
+
+tasks:
+  - ALPINE.PROCESS.PS.0
+  - ALPINE.PROCESS.HIDDEN_PROCESSES.0
+  - ALPINE.PROCESS.TOP.0
+  - ALPINE.PROCESS.LSOF.0
+  - ALPINE.PROCESS.PROC.1
+  - ALPINE.PROCESS.PSTREE.0
+  - ALPINE.PROCESS.HASH_RUNNING_PROCESSES.0
+  - ALPINE.PROCESS.STRINGS.0
+  - ALPINE.PROCESS.DELETED_RECOVERY.0
+  - ALPINE.NETWORK.ARP.0
+  - ALPINE.NETWORK.PROC_NET.0
+  - ALPINE.NETWORK.HOSTNAME.0
+  - ALPINE.NETWORK.HOSTNAME.1
+  - ALPINE.NETWORK.IFCONFIG.0
+  - ALPINE.NETWORK.IP.ADDR.0
+  - ALPINE.NETWORK.IP.LINK.0
+  - ALPINE.NETWORK.IP.NEIGH.0
+  - ALPINE.NETWORK.IP.ROUTE.0
+  - ALPINE.NETWORK.NETSTAT.0

@@ -1,0 +1,75 @@
+id: ALPINE.PROCESS.HASH_RUNNING_PROCESSES.0
+version: 1
+category: process
+action: command
+impact: PASSIVE
+volatility: 10
+priority: 6
+requires_elevation: true
+evidential_source:
+- /proc/[pid]/exe
+commands_used:
+- readlink
+- sha256sum
+- sha512sum
+- sha3sum
+- sha1sum
+- md5sum
+output_type: file
+output_path: process/hash_running_processes.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  : >"${output_file}"
+
+  if [ "${HASH_AVAILABLE:-0}" -eq 1 ]; then
+    printf '%s\n' "HASH_ALG=${HASH_CMD}" >>"${output_file}"
+
+    for exe_link in /proc/[0-9]*/exe; do
+      [ -L "${exe_link}" ] || continue
+
+      target="$(readlink "${exe_link}" 2>>"${LOG}" || true)"
+      [ -n "${target}" ] || continue
+
+      case "${target}" in
+        *" (deleted)"*)
+          printf '%s\n' "DELETED ${target}" >>"${output_file}"
+          continue
+          ;;
+      esac
+
+      if [ -r "${target}" ]; then
+        "${HASH_CMD}" "${target}" >>"${output_file}" 2>>"${LOG}" || true
+      else
+        printf '%s\n' "UNREADABLE ${target}" >>"${output_file}"
+      fi
+    done
+
+  else
+    printf '%s\n' "hashing not available" >>"${output_file}"
+  fi
+description: |
+  Summary:
+    Computes cryptographic hashes of executables backing running processes by
+    resolving /proc/<pid>/exe symbolic links.
+
+  Dependencies:
+    Requires the readlink command. Hashing depends on global framework variables
+    HASH_AVAILABLE and HASH_CMD being set. The variables TASK_OUTPUT and LOG must be
+    defined, and a mkparent function must be available to create the output path.
+
+  Output:
+    Writes the selected hashing algorithm and resulting file hashes to the path
+    defined by output_path, provided at runtime via TASK_OUTPUT. Entries for
+    deleted or unreadable targets are recorded explicitly.
+
+  Notes:
+    The first available hashing utility is selected in priority order, favouring
+    stronger algorithms where available. Symlink targets marked as "(deleted)"
+    indicate executables that are no longer present on disk but may still be
+    executing in memory; these are recorded but not hashed. Unreadable files are
+    also recorded. Transient errors due to process lifecycle changes are expected
+    and are written to the log without interrupting execution.
+references:
+- Derived from UAC artifacts live_response process hash_running_processes.yaml; adapted for Alpine by resolving /proc/<pid>/exe targets and using available BusyBox-compatible hash utilities.

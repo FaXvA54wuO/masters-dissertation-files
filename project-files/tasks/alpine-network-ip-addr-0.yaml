@@ -1,0 +1,39 @@
+id: ALPINE.NETWORK.IP.ADDR.0
+version: 1
+category: network
+action: command
+impact: PASSIVE
+volatility: 20
+priority: 5
+requires_elevation: false
+evidential_source:
+- network interface address state
+commands_used:
+- ip
+output_type: file
+output_path: network/ip_addr.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  if command -v ip >/dev/null 2>&1; then
+    ip addr show >"${output_file}" 2>>"${LOG}" || printf '%s\n' "command failed" >"${output_file}"
+  else
+    printf '%s\n' "ip not present" >"${output_file}"
+  fi
+description: |
+  Summary:
+    Captures network interface address configuration using ip addr show.
+
+  Dependencies:
+    Requires the ip command to be available on the system. The variables
+    TASK_OUTPUT and LOG must be defined, and a mkparent function must be available
+    to create the output path.
+
+  Output:
+    Writes interface address information to the path defined by output_path.
+
+  Notes:
+    Includes assigned IP addresses and interface-level configuration.
+references:
+  - "Derived from UAC network/ip.yaml"

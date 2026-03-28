@@ -1,0 +1,39 @@
+id: ALPINE.NETWORK.IP.NEIGH.0
+version: 1
+category: network
+action: command
+impact: PASSIVE
+volatility: 20
+priority: 6
+requires_elevation: false
+evidential_source:
+- kernel neighbour table
+commands_used:
+- ip
+output_type: file
+output_path: network/ip_neigh.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  if command -v ip >/dev/null 2>&1; then
+    ip neigh show >"${output_file}" 2>>"${LOG}" || printf '%s\n' "command failed" >"${output_file}"
+  else
+    printf '%s\n' "ip not present" >"${output_file}"
+  fi
+description: |
+  Summary:
+    Captures the kernel neighbour table using ip neigh show.
+
+  Dependencies:
+    Requires the ip command to be available on the system. The variables
+    TASK_OUTPUT and LOG must be defined, and a mkparent function must be available
+    to create the output path.
+
+  Output:
+    Writes neighbour table entries to the path defined by output_path.
+
+  Notes:
+    Provides IP-to-MAC resolution state similar to ARP/NDP caches.
+references:
+  - "Derived from UAC network/ip.yaml"

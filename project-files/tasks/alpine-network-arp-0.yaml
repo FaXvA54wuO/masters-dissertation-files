@@ -1,0 +1,41 @@
+id: ALPINE.NETWORK.ARP.0
+version: 1
+category: network
+action: command
+impact: PASSIVE
+volatility: 20
+priority: 0
+requires_elevation: false
+evidential_source:
+- kernel IPv4 neighbour cache
+commands_used:
+- arp
+output_type: file
+output_path: network/arp.txt
+environment: ash
+script: |
+  output_file="$(mkparent "${TASK_OUTPUT}")"
+
+  arp -a >"${output_file}" 2>>"${LOG}"
+description: |
+  Summary:
+    Captures the current IPv4 neighbour cache, mapping IP addresses to link-layer
+    (MAC) addresses.
+
+  Dependencies:
+    Requires the arp command to be available on the system. The variables
+    TASK_OUTPUT and LOG must be defined, and a mkparent function must be available
+    to create the output path.
+
+  Output:
+    Writes the contents of the IPv4 neighbour cache to the path defined by
+    output_path, provided at runtime via TASK_OUTPUT.
+
+  Notes:
+    This provides a point-in-time view of recently resolved network neighbours,
+    which may include active or recently contacted hosts. Entries are transient
+    and may expire quickly, making early collection important. No fallback method
+    is implemented as the arp applet is expected to be present on the target
+    Alpine environment.
+references:
+- Derived from UAC network arp.yaml; simplified to a single BusyBox-compatible arp -a execution.
